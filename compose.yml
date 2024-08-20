@@ -1,0 +1,121 @@
+services:
+  vote:
+    depends_on: 
+      redis:
+        condition: service_healthy
+    deploy:
+      replicas: 2
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    image: voting-app
+    pull_policy: never
+    build:
+      context: ./vote
+      target: dev
+    networks:
+      - frontend
+      - backend
+    ports:
+      - published: "5000-5001"
+        target: "80"
+    volumes:
+      - type: bind
+        source: ./vote
+        target: /usr/local/app
+
+  result:
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    image: result-app
+    pull_policy: never
+    build: ./result
+    entrypoint: nodemon --inspect=0.0.0.0 server.js
+    networks:
+      - frontend
+      - dataplane
+    ports:
+      - published: "5500"
+        target: "80"
+      - published: "9229"
+        target: "9229"
+        host_ip: 127.0.0.1 
+    volumes:
+      - type: bind
+        source: ./result
+        target: /usr/local/app
+
+  redis:
+    healthcheck:
+      test: /healthchecks/redis.sh
+    image: redis:alpine
+    networks:
+      - backend
+    volumes:
+      - type: bind
+        source: ./healthchecks
+        target: /healthchecks
+
+  worker:
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    image: dockersamples/examplevotingapp_worker
+    networks:
+      - backend
+      - dataplane
+
+  db:
+    env_file:
+      - .env
+    healthcheck:
+      test: /healthchecks/postgres.sh
+    image: postgres:9.4
+    networks:
+      - dataplane
+    volumes:
+      - type: bind
+        source: ./healthchecks
+        target: /healthchecks
+      - type: volume
+        source: db-data
+        target: /var/lib/postgresql/data
+  
+  seed:
+    build: ./seed-data
+    depends_on:
+      vote:
+        condition: service_healthy
+    profiles: ["seed"]
+    restart: "no"
+    networks:
+      - frontend
+
+networks:
+  frontend:
+    ipam:
+      config:
+        - subnet: 172.20.10.0/24
+  backend:
+    ipam:
+      config:
+        - subnet: 172.20.20.0/24
+  dataplane:
+    ipam:
+      config:
+        - subnet: 172.20.30.0/24
+
+volumes:
+  db-data:
